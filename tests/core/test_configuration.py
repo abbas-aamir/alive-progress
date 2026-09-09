@@ -106,6 +106,7 @@ def test_config_create(handler):
     dict(force_tty=True),
     dict(manual=True),
     dict(enrich_print=False),
+    dict(title_length=10),
     dict(spinner=SPINNERS['pulse'][0], bar=BARS['solid'], unknown=SPINNERS['fish'][1]),
     dict(force_tty=True, manual=True, enrich_print=False),
 ])
@@ -158,3 +159,30 @@ def test_config_global_theme(config_params_theme, handler):
     handler.set_global(theme='cool')
     config = handler()
     assert {k: getattr(config, k) for k in config_params_theme} == config_params_theme
+
+
+def test_config_local_theme(config_params_theme, handler):
+    config = handler(theme='cool')
+    assert {k: getattr(config, k) for k in config_params_theme} == config_params_theme
+
+
+def test_config_theme_options_override_theme(config_params_theme, handler):
+    config = handler(theme='cool', length=20)
+    assert config.length == 20
+    assert {k: getattr(config, k) for k in config_params_theme if k != 'length'} == \
+           {k: v for k, v in config_params_theme.items() if k != 'length'}
+
+
+def test_config_local_theme_does_not_mutate_global(config_params_theme, handler):
+    original = handler()
+    assert handler(theme='cool') != original
+    assert handler() == original
+
+
+def test_config_reset(handler):
+    original = handler()
+    handler.set_global(length=20, force_tty=True, manual=True, enrich_print=False)
+    assert handler() != original
+
+    handler.reset()
+    assert handler() == original

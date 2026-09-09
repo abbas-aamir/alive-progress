@@ -42,6 +42,17 @@ def test_scrolling_spinner(length, block, blank, right, hiding, expected):
         assert tuple(cycle) == result
 
 
+def test_scrolling_spinner_scales_block_with_actual_length():
+    spinner_factory = scrolling_spinner_factory('abc', length=4, block=2, blank='_',
+                                                right=True, hiding=False)
+    spinner = spinner_factory(length_actual=8)
+    assert spinner.cycles == 8
+    assert tuple(spinner()) == (
+        'aaaa____', '_aaaa___', '__aaaa__', '___aaaa_', '____aaaa',
+        'b____aaa', 'bb____aa', 'bbb____a',
+    )
+
+
 @pytest.mark.parametrize('length, block, blank, hiding, expected', [
     (3, None, ' ', True, (('   ', 'c  ', 'bc ', 'abc', ' ab', '  a',
                            '   ', '  d', ' de', 'def', 'ef ', 'f  '),)),
@@ -61,6 +72,18 @@ def test_bouncing_spinner(length, block, blank, hiding, expected):
     for result in expected:
         cycle = spinner()
         assert tuple(cycle) == result
+
+
+def test_bouncing_spinner_scales_block_with_actual_length():
+    spinner_factory = bouncing_spinner_factory('abc', length=5, block=2, left_chars='def',
+                                               blank='_', hiding=False)
+    spinner = spinner_factory(length_actual=10)
+    assert spinner.cycles == 12
+    assert tuple(spinner()) == (
+        'aaaa______', '_aaaa_____', '__aaaa____', '___aaaa___', '____aaaa__',
+        '_____aaaa_', '______dddd', '_____dddd_', '____dddd__', '___dddd___',
+        '__dddd____', '_dddd_____',
+    )
 
 
 @pytest.mark.parametrize('outputs, expected', [
@@ -84,3 +107,10 @@ def test_delayed_spinner(copies, offset, expected, spinner_test):
     spinner = spinner_factory(length_actual=None)  # natural spinner size.
     cycle = spinner()
     assert tuple(cycle) == expected
+
+
+def test_delayed_spinner_recalculates_copies_for_actual_length(spinner_test):
+    spinner_factory = delayed_spinner_factory(spinner_test('12345'), copies=2, offset=1)
+    spinner = spinner_factory(length_actual=5)
+    assert spinner.cycles == 5
+    assert tuple(spinner()) == ('12345', '23451', '34512', '45123', '51234')
