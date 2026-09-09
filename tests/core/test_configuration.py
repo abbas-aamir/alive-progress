@@ -158,3 +158,13 @@ def test_config_global_theme(config_params_theme, handler):
     handler.set_global(theme='cool')
     config = handler()
     assert {k: getattr(config, k) for k in config_params_theme} == config_params_theme
+
+
+def test_config_local_theme(config_params_theme, handler):
+    config = handler(theme='cool')
+    assert {k: getattr(config, k) for k in config_params_theme} == config_params_theme
+
+
+def test_config_theme_options_override_theme(config_params_theme, handler):
+    config = handler(theme='cool', length=12)
+    assert config.length == 12
