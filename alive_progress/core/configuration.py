@@ -26,8 +26,9 @@ def _style_input_factory(name_lookup, func_lookup, name_index=None):
 
 def _int_input_factory(lower, upper):
     def _input(x):
-        if lower <= int(x) <= upper:
-            return int(x)
+        value = int(x)
+        if lower <= value <= upper:
+            return value
 
     return _input
 
@@ -55,6 +56,30 @@ Config = namedtuple('Config', tuple(CONFIG_VARS.keys()))
 Config.__new__.__defaults__ = (None,) * len(CONFIG_VARS)
 
 
+def _validate_config_option(key, value):
+    try:
+        result = CONFIG_VARS[key](value)
+        if result is None:
+            raise ValueError
+        return result
+    except KeyError:
+        raise ValueError('invalid config name: {}'.format(key))
+    except Exception:
+        raise ValueError('invalid config value: {}={}'.format(key, repr(value)))
+
+
+def _parse_config(theme, options):
+    """Validate and convert configuration options."""
+    if theme:
+        if theme not in THEMES:
+            raise ValueError('invalid theme name={}'.format(repr(theme)))
+        overrides = options
+        options = deepcopy(THEMES[theme])
+        options.update(overrides)
+
+    return {k: _validate_config_option(k, v) for k, v in options.items()}
+
+
 def create_config():
     def reset():
         """Resets global configuration to the default one."""
@@ -74,36 +99,14 @@ def create_config():
             alive_progress#alive_bar(**options)
 
         """
-        global_config.update(_parse(theme, options))
+        global_config.update(_parse_config(theme, options))
 
     def create_context(theme=None, **options):
         """Create an immutable copy of the current configuration, with optional customization."""
         local_config = deepcopy(global_config)
-        local_config.update(_parse(theme, options))
+        local_config.update(_parse_config(theme, options))
         # noinspection PyArgumentList
         return Config(**local_config)
-
-    def _parse(theme, options):
-        """Validate and convert some configuration options."""
-
-        def validator(key, value):
-            try:
-                result = CONFIG_VARS[key](value)
-                if result is None:
-                    raise ValueError
-                return result
-            except KeyError:
-                raise ValueError('invalid config name: {}'.format(key))
-            except Exception:
-                raise ValueError('invalid config value: {}={}'.format(key, repr(value)))
-
-        if theme:
-            if theme not in THEMES:
-                raise ValueError('invalid theme name={}'.format(repr(theme)))
-            swap = options
-            options = deepcopy(THEMES[theme])
-            options.update(swap)
-        return {k: validator(k, v) for k, v in options.items()}
 
     global_config = {}
     reset()

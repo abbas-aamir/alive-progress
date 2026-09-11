@@ -11,7 +11,7 @@ except ImportError:
 from alive_progress.styles.internal import BARS, SPINNERS, THEMES
 # noinspection PyProtectedMember
 from alive_progress.core.configuration import Config, _bool_input_factory, _int_input_factory, \
-    _style_input_factory, create_config
+    _parse_config, _style_input_factory, _validate_config_option, create_config
 
 
 @pytest.mark.parametrize('lower, upper, num, expected', [
@@ -23,6 +23,12 @@ from alive_progress.core.configuration import Config, _bool_input_factory, _int_
 def test_int_input_factory(lower, upper, num, expected):
     func = _int_input_factory(lower, upper)
     assert func(num) == expected
+
+
+def test_int_input_factory_rejects_non_integer():
+    func = _int_input_factory(1, 10)
+    with pytest.raises(ValueError):
+        func('ten')
 
 
 @pytest.mark.parametrize('param, expected', [
@@ -146,6 +152,20 @@ def test_config_global_error(config_params_error, handler):
 def test_config_local_error(config_params_error, handler):
     with pytest.raises(ValueError):
         handler(**config_params_error)
+
+
+def test_validate_config_option_rejects_unknown_key():
+    with pytest.raises(ValueError) as exc:
+        _validate_config_option('cool', True)
+
+    assert str(exc.value) == 'invalid config name: cool'
+
+
+def test_parse_config_theme_is_not_mutated(config_params_theme):
+    result = _parse_config('cool', dict(length=10))
+
+    assert result['length'] == 10
+    assert THEMES['cool'] == config_params_theme
 
 
 @pytest.fixture
