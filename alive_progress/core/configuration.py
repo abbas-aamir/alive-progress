@@ -10,17 +10,32 @@ from ..animations import bars, spinners
 from ..styles.internal import BARS, SPINNERS, THEMES
 
 
-def _style_input_factory(name_lookup, func_lookup, name_index=None):
-    def _input(x):
-        if isinstance(x, FunctionType):
-            if x.__code__.co_name == 'inner_factory' \
-                    and os.path.splitext(x.__code__.co_filename)[0] == func_file:
-                return x
-        elif x in name_lookup:
-            return getter(name_lookup[x])
+STYLE_FACTORY_NAME = 'inner_factory'
+
+
+def _same_module_style_factory(value, func_lookup):
+    if not isinstance(value, FunctionType):
+        return False
 
     func_file, _ = os.path.splitext(func_lookup.__file__)
-    getter = (lambda x: x) if name_index is None else lambda x: x[name_index]
+    value_file, _ = os.path.splitext(value.__code__.co_filename)
+    return value.__code__.co_name == STYLE_FACTORY_NAME and value_file == func_file
+
+
+def _get_named_style(name_lookup, name_index, value):
+    if value not in name_lookup:
+        return None
+
+    style = name_lookup[value]
+    return style if name_index is None else style[name_index]
+
+
+def _style_input_factory(name_lookup, func_lookup, name_index=None):
+    def _input(x):
+        if _same_module_style_factory(x, func_lookup):
+            return x
+        return _get_named_style(name_lookup, name_index, x)
+
     return _input
 
 
@@ -53,6 +68,45 @@ CONFIG_VARS = dict(
 
 Config = namedtuple('Config', tuple(CONFIG_VARS.keys()))
 Config.__new__.__defaults__ = (None,) * len(CONFIG_VARS)
+
+DEFAULT_CONFIG = dict(
+    length=40,
+    theme='smooth',  # includes spinner, bar and unknown.
+    force_tty=False,
+    manual=False,
+    enrich_print=True,
+    title_length=0,
+)
+
+
+def _parse(theme, options):
+    """Validate and convert configuration options."""
+    options = _merge_theme_options(theme, options)
+    return {key: _validate_config_value(key, value) for key, value in options.items()}
+
+
+def _merge_theme_options(theme, options):
+    if not theme:
+        return options
+
+    if theme not in THEMES:
+        raise ValueError('invalid theme name={}'.format(repr(theme)))
+
+    themed_options = deepcopy(THEMES[theme])
+    themed_options.update(options)
+    return themed_options
+
+
+def _validate_config_value(key, value):
+    try:
+        result = CONFIG_VARS[key](value)
+        if result is None:
+            raise ValueError
+        return result
+    except KeyError:
+        raise ValueError('invalid config name: {}'.format(key))
+    except Exception:
+        raise ValueError('invalid config value: {}={}'.format(key, repr(value)))
 
 
 def _merge_theme(theme, options):
@@ -92,14 +146,7 @@ def _parse_config(theme, options):
 def create_config():
     def reset():
         """Resets global configuration to the default one."""
-        set_global(  # this must have all available config vars.
-            length=40,
-            theme='smooth',  # includes spinner, bar and unknown.
-            force_tty=False,
-            manual=False,
-            enrich_print=True,
-            title_length=0,
-        )
+        set_global(**DEFAULT_CONFIG)  # this must have all available config vars.
 
     def set_global(theme=None, **options):
         """Update the global configuration, to be used in subsequent alive bars.
