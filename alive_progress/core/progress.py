@@ -16,6 +16,51 @@ from .utils import clear_traces, hide_cursor, render_title, sanitize_text_markin
     show_cursor, get_terminal_size
 from ..animations.utils import spinner_player
 
+MIN_FPS, MAX_FPS, BOOTSTRAP_FPS = 2., 60., 10.
+
+
+def _validate_total(total):
+    """Normalize the `total` argument: None for unknown, otherwise a positive int."""
+    if total is None:
+        return None
+    if not isinstance(total, int):
+        raise TypeError("integer argument expected, got '{}'.".format(type(total).__name__))
+    return total if total > 0 else None
+
+
+def _gen_fps_calculator(calibrate, default_calibrate):
+    """Create the dynamic fps function, calibrated to reach MAX_FPS at `calibrate` throughput.
+
+    I've started with the equation y = log10(x + m) * k + n, where:
+      y is the desired fps, m and n are horizontal and vertical translation,
+      k is a calibration factor, computed from some user input c (see readme for details).
+    considering MIN_FPS and MAX_FPS as given constants, I came to:
+      fps = log10(x + 1) * k + MIN_FPS, which must be equal to MAX_FPS for x = c,
+    so the factor k = (MAX_FPS - MIN_FPS) / log10(c + 1), and
+      fps = log10(x + 1) * (MAX_FPS - MIN_FPS) / log10(c + 1) + MIN_FPS
+    neat! ;)
+
+    Args:
+        calibrate (Optional[float]): the user supplied maximum theoretical throughput
+        default_calibrate (float): the value used when `calibrate` is not given
+
+    Returns:
+        a function that takes the current rate and returns the fps to animate at.
+
+    """
+    calibrate = max(0., calibrate or default_calibrate)
+    adjust_log_curve = 100. / min(calibrate, 100.)  # adjust curve for small numbers
+    factor = (MAX_FPS - MIN_FPS) / math.log10((calibrate * adjust_log_curve) + 1.)
+
+    def fps(rate):
+        if rate <= 0:
+            return BOOTSTRAP_FPS
+        if rate < calibrate:
+            return math.log10((rate * adjust_log_curve) + 1.) * factor + MIN_FPS
+        return MAX_FPS
+
+    return fps
+
 
 @contextmanager
 def alive_bar(total=None, title=None, calibrate=None, **options):
@@ -87,11 +132,7 @@ def alive_bar(total=None, title=None, calibrate=None, **options):
             title_length (int): fixed title length, or 0 for unlimited
 
     """
-    if total is not None:
-        if not isinstance(total, int):
-            raise TypeError("integer argument expected, got '{}'.".format(type(total).__name__))
-        if total <= 0:
-            total = None
+    total = _validate_total(total)
     config = config_handler(**options)
 
     def run(spinner):
@@ -99,7 +140,7 @@ def alive_bar(total=None, title=None, calibrate=None, **options):
         while thread:
             release_thread.wait()
             alive_repr(next(player))
-            time.sleep(1. / fps())
+            time.sleep(1. / calc_fps(run.rate))
 
     def alive_repr(spin=''):
         elapsed = time.time() - run.init
@@ -221,26 +262,7 @@ def alive_bar(total=None, title=None, calibrate=None, **options):
         stats = lambda: '({:.1f}/s)'.format(run.rate)  # noqa
     stats_end = lambda: '({:.2{}}/s)'.format(run.rate, rate_spec)  # noqa
 
-    # calibration of the dynamic fps engine.
-    # I've started with the equation y = log10(x + m) * k + n, where:
-    #   y is the desired fps, m and n are horizontal and vertical translation,
-    #   k is a calibration factor, computed from some user input c (see readme for details).
-    # considering minfps and maxfps as given constants, I came to:
-    #   fps = log10(x + 1) * k + minfps, which must be equal to maxfps for x = c,
-    # so the factor k = (maxfps - minfps) / log10(c + 1), and
-    #   fps = log10(x + 1) * (maxfps - minfps) / log10(c + 1) + minfps
-    # neat! ;)
-    min_fps, max_fps = 2., 60.
-    calibrate = max(0., calibrate or factor)
-    adjust_log_curve = 100. / min(calibrate, 100.)  # adjust curve for small numbers
-    factor = (max_fps - min_fps) / math.log10((calibrate * adjust_log_curve) + 1.)
-
-    def fps():
-        if run.rate <= 0:
-            return 10.  # bootstrap speed
-        if run.rate < calibrate:
-            return math.log10((run.rate * adjust_log_curve) + 1.) * factor + min_fps
-        return max_fps
+    calc_fps = _gen_fps_calculator(calibrate, factor)
 
     end, run.text, run.last_line_len = False, '', 0
     run.count, run.percent, run.rate, run.init = 0, 0., 0., 0.
