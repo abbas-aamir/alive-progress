@@ -17,6 +17,57 @@ from .utils import clear_traces, hide_cursor, render_title, sanitize_text_markin
 from ..animations.utils import spinner_player
 
 
+def _normalize_total(total):
+    """Validate and normalize the user supplied `total`, falling back to
+    unknown mode (`None`) for anything that isn't a positive int."""
+    if total is None:
+        return None
+    if not isinstance(total, int):
+        raise TypeError("integer argument expected, got '{}'.".format(type(total).__name__))
+    if total <= 0:
+        return None
+    return total
+
+
+def _resolve_progress_mode(total, manual):
+    """Decide what the bar is actually counting: items towards a known
+    `total`, or a manually driven percentage. Returns the logic total to
+    feed the ETA estimator, the rate format spec, the theoretical
+    throughput used to calibrate the fps curve, and which `run` attribute
+    holds the current progress value."""
+    if total or not manual:  # we can count items.
+        return total, 'f', 1.e6, 'count'
+    return 1., '%', 1., 'percent'  # there's only a manual percentage.
+
+
+def _create_fps_controller(get_rate, calibrate, factor):
+    """Build the dynamic fps function used by the monitor thread.
+
+    I've started with the equation y = log10(x + m) * k + n, where:
+      y is the desired fps, m and n are horizontal and vertical translation,
+      k is a calibration factor, computed from some user input c (see readme for details).
+    considering minfps and maxfps as given constants, I came to:
+      fps = log10(x + 1) * k + minfps, which must be equal to maxfps for x = c,
+    so the factor k = (maxfps - minfps) / log10(c + 1), and
+      fps = log10(x + 1) * (maxfps - minfps) / log10(c + 1) + minfps
+    neat! ;)
+    """
+    min_fps, max_fps = 2., 60.
+    calibrate = max(0., calibrate or factor)
+    adjust_log_curve = 100. / min(calibrate, 100.)  # adjust curve for small numbers
+    factor = (max_fps - min_fps) / math.log10((calibrate * adjust_log_curve) + 1.)
+
+    def fps():
+        rate = get_rate()
+        if rate <= 0:
+            return 10.  # bootstrap speed
+        if rate < calibrate:
+            return math.log10((rate * adjust_log_curve) + 1.) * factor + min_fps
+        return max_fps
+
+    return fps
+
+
 @contextmanager
 def alive_bar(total=None, title=None, calibrate=None, **options):
     """An alive progress bar to keep track of lengthy operations.
@@ -87,11 +138,7 @@ def alive_bar(total=None, title=None, calibrate=None, **options):
             title_length (int): fixed title length, or 0 for unlimited
 
     """
-    if total is not None:
-        if not isinstance(total, int):
-            raise TypeError("integer argument expected, got '{}'.".format(type(total).__name__))
-        if total <= 0:
-            total = None
+    total = _normalize_total(total)
     config = config_handler(**options)
 
     def run(spinner):
@@ -204,10 +251,8 @@ def alive_bar(total=None, title=None, calibrate=None, **options):
         thread.daemon = True
         thread.start()
 
-    if total or not config.manual:  # we can count items.
-        logic_total, rate_spec, factor, current = total, 'f', 1.e6, lambda: run.count  # noqa
-    else:  # there's only a manual percentage.
-        logic_total, rate_spec, factor, current = 1., '%', 1., lambda: run.percent  # noqa
+    logic_total, rate_spec, factor, current_attr = _resolve_progress_mode(total, config.manual)
+    current = lambda: getattr(run, current_attr)  # noqa
 
     bar_handle.text, bar_handle.current = set_text, current
     if total or config.manual:  # we can track progress and therefore eta.
@@ -221,26 +266,8 @@ def alive_bar(total=None, title=None, calibrate=None, **options):
         stats = lambda: '({:.1f}/s)'.format(run.rate)  # noqa
     stats_end = lambda: '({:.2{}}/s)'.format(run.rate, rate_spec)  # noqa
 
-    # calibration of the dynamic fps engine.
-    # I've started with the equation y = log10(x + m) * k + n, where:
-    #   y is the desired fps, m and n are horizontal and vertical translation,
-    #   k is a calibration factor, computed from some user input c (see readme for details).
-    # considering minfps and maxfps as given constants, I came to:
-    #   fps = log10(x + 1) * k + minfps, which must be equal to maxfps for x = c,
-    # so the factor k = (maxfps - minfps) / log10(c + 1), and
-    #   fps = log10(x + 1) * (maxfps - minfps) / log10(c + 1) + minfps
-    # neat! ;)
-    min_fps, max_fps = 2., 60.
-    calibrate = max(0., calibrate or factor)
-    adjust_log_curve = 100. / min(calibrate, 100.)  # adjust curve for small numbers
-    factor = (max_fps - min_fps) / math.log10((calibrate * adjust_log_curve) + 1.)
-
-    def fps():
-        if run.rate <= 0:
-            return 10.  # bootstrap speed
-        if run.rate < calibrate:
-            return math.log10((run.rate * adjust_log_curve) + 1.) * factor + min_fps
-        return max_fps
+    # calibration of the dynamic fps engine, see `_create_fps_controller` for the math.
+    fps = _create_fps_controller(lambda: run.rate, calibrate, factor)
 
     end, run.text, run.last_line_len = False, '', 0
     run.count, run.percent, run.rate, run.init = 0, 0., 0., 0.
